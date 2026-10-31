@@ -1,78 +1,68 @@
-// Minimal launcher window (Win32) — builds cleanly in GitHub Actions.
-// Named RubyLauncher; later can be packaged as MSIX / swapped for full UWP.
-//
-// Title: RubyRecomp Launcher
-// Esc or close button exits.
+// Pure UWP launcher (CoreApplication + CoreWindow).
+// Builds with CMAKE_SYSTEM_NAME=WindowsStore for Xbox / Windows sideload.
 
-#ifndef UNICODE
-#define UNICODE
-#endif
-#ifndef _UNICODE
-#define _UNICODE
-#endif
+#include <winrt/base.h>
+#include <winrt/Windows.ApplicationModel.Core.h>
+#include <winrt/Windows.UI.Core.h>
+#include <winrt/Windows.System.h>
+#include <winrt/Windows.Foundation.h>
 
-#include <windows.h>
+using namespace winrt;
+using namespace Windows::ApplicationModel::Core;
+using namespace Windows::UI::Core;
+using namespace Windows::System;
 
-static const wchar_t kClassName[] = L"RubyLauncherClass";
-static const wchar_t kTitle[] = L"RubyRecomp Launcher";
-
-static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+struct AppView : implements<AppView, IFrameworkView>
 {
-    switch (msg) {
-    case WM_PAINT: {
-        PAINTSTRUCT ps;
-        HDC hdc = BeginPaint(hwnd, &ps);
-        RECT rc;
-        GetClientRect(hwnd, &rc);
-        HBRUSH brush = CreateSolidBrush(RGB(26, 26, 46));
-        FillRect(hdc, &rc, brush);
-        DeleteObject(brush);
-        SetBkMode(hdc, TRANSPARENT);
-        SetTextColor(hdc, RGB(255, 215, 94));
-        DrawTextW(hdc, L"RubyRecomp\nUWP / Xbox launcher shell\n\n(Esc to quit)",
-                  -1, &rc, DT_CENTER | DT_VCENTER | DT_WORDBREAK);
-        EndPaint(hwnd, &ps);
-        return 0;
+    bool m_closed{ false };
+
+    void Initialize(CoreApplicationView const&)
+    {
     }
-    case WM_KEYDOWN:
-        if (wParam == VK_ESCAPE) {
-            PostQuitMessage(0);
-            return 0;
+
+    void SetWindow(CoreWindow const& window)
+    {
+        window.Closed([this](auto&&, auto&&) { m_closed = true; });
+
+        window.KeyDown([](auto&&, KeyEventArgs const& args) {
+            auto key = args.VirtualKey();
+            if (key == VirtualKey::Escape || key == VirtualKey::GamepadB) {
+                CoreApplication::Exit();
+            }
+        });
+    }
+
+    void Load(hstring const&)
+    {
+    }
+
+    void Run()
+    {
+        auto window = CoreWindow::GetForCurrentThread();
+        window.Activate();
+
+        while (!m_closed) {
+            window.Dispatcher().ProcessEvents(
+                CoreProcessEventsOption::ProcessOneAndAllPending);
         }
-        break;
-    case WM_DESTROY:
-        PostQuitMessage(0);
-        return 0;
     }
-    return DefWindowProcW(hwnd, msg, wParam, lParam);
-}
 
-int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow)
+    void Uninitialize()
+    {
+    }
+};
+
+struct AppViewSource : implements<AppViewSource, IFrameworkViewSource>
 {
-    WNDCLASSEXW wc{};
-    wc.cbSize = sizeof(wc);
-    wc.style = CS_HREDRAW | CS_VREDRAW;
-    wc.lpfnWndProc = WndProc;
-    wc.hInstance = hInstance;
-    wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
-    wc.lpszClassName = kClassName;
-    RegisterClassExW(&wc);
-
-    HWND hwnd = CreateWindowExW(
-        0, kClassName, kTitle,
-        WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, CW_USEDEFAULT, 960, 540,
-        nullptr, nullptr, hInstance, nullptr);
-    if (!hwnd) return 1;
-
-    ShowWindow(hwnd, nCmdShow);
-    UpdateWindow(hwnd);
-
-    MSG msg;
-    while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
-        TranslateMessage(&msg);
-        DispatchMessageW(&msg);
+    IFrameworkView CreateView()
+    {
+        return make<AppView>();
     }
-    return (int)msg.wParam;
+};
+
+int __stdcall wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
+{
+    init_apartment(apartment_type::single_threaded);
+    CoreApplication::Run(make<AppViewSource>());
+    return 0;
 }
