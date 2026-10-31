@@ -1,4 +1,4 @@
-name: Ruby UWP Launcher (x64)
+name: Ruby Launcher MSIX (x64)
 
 on:
   push:
@@ -23,11 +23,12 @@ jobs:
       - name: Setup CMake
         uses: lukka/get-cmake@latest
 
-      - name: Generate placeholder UWP assets
+      - name: Generate placeholder assets
         shell: pwsh
         run: |
           $assets = "uwp/Assets"
           New-Item -ItemType Directory -Force -Path $assets | Out-Null
+          # Minimal valid PNG
           $pngB64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
           $bytes = [Convert]::FromBase64String($pngB64)
           foreach ($name in @(
@@ -41,85 +42,94 @@ jobs:
             [IO.File]::WriteAllBytes((Join-Path $assets $name), $bytes)
           }
 
-      - name: Configure CMake (x64 only)
+      - name: Configure CMake (x64)
         working-directory: uwp
         shell: cmd
-        run: |
-          cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
 
       - name: Build RubyLauncher (x64 Release)
         working-directory: uwp
         shell: cmd
-        run: |
-          cmake --build build --config Release --parallel
+        run: cmake --build build --config Release --parallel
 
-      - name: Locate output and verify 64-bit PE
+      - name: Verify 64-bit PE
         id: out
         shell: pwsh
         run: |
-          $exe = Get-ChildItem -Path uwp/build -Recurse -Filter RubyLauncher.exe -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $exe) {
-            Write-Host "No RubyLauncher.exe found"
-            Get-ChildItem -Path uwp/build -Recurse | Select-Object -First 80 FullName
-            exit 1
-          }
-          Write-Host "Found $($exe.FullName)"
-
-          # PE machine type at offset after e_lfanew: IMAGE_FILE_MACHINE_AMD64 = 0x8664
+          $exe = Get-ChildItem -Path uwp/build -Recurse -Filter RubyLauncher.exe | Select-Object -First 1
+          if (-not $exe) { throw "RubyLauncher.exe not found" }
           $fs = [IO.File]::OpenRead($exe.FullName)
           $br = New-Object IO.BinaryReader($fs)
           $fs.Seek(0x3C, 'Begin') | Out-Null
           $peOffset = $br.ReadInt32()
-          $fs.Seek($peOffset, 'Begin') | Out-Null
-          $peSig = $br.ReadUInt32()  # PE\0\0
+          $fs.Seek($peOffset + 4, 'Begin') | Out-Null
           $machine = $br.ReadUInt16()
-          $br.Close()
-          $fs.Close()
-
-          $machineHex = '0x{0:X4}' -f $machine
-          Write-Host "PE signature OK=$($peSig -eq 0x4550) machine=$machineHex"
-          if ($machine -ne 0x8664) {
-            Write-Error "RubyLauncher.exe is NOT 64-bit (machine=$machineHex, expected 0x8664 AMD64)"
-            exit 1
-          }
-          Write-Host "Verified: 64-bit (x64 / AMD64)"
-
+          $br.Close(); $fs.Close()
+          if ($machine -ne 0x8664) { throw "Not x64 (machine=0x$('{0:X4}' -f $machine))" }
+          Write-Host "OK: $($exe.FullName) is x64"
           echo "exe=$($exe.FullName)" >> $env:GITHUB_OUTPUT
-          echo "exedir=$($exe.DirectoryName)" >> $env:GITHUB_OUTPUT
 
-      - name: Stage package layout
+      - name: Stage package
         shell: pwsh
         run: |
           $stage = "uwp/package-stage"
+          Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path "$stage/Assets" | Out-Null
           Copy-Item "$env:EXE" "$stage/RubyLauncher.exe"
-          Copy-Item uwp/Assets/*.png $stage/Assets/
-          $manifest = Get-Content uwp/Package.appxmanifest -Raw
-          $manifest = $manifest -replace '\$targetnametoken\$\.exe', 'RubyLauncher.exe'
-          $manifest = $manifest -replace 'EntryPoint="RubySapphireRecomp.App"', 'EntryPoint="Windows.FullTrustApplication"'
-          Set-Content -Path "$stage/AppxManifest.xml" -Value $manifest -Encoding UTF8
+          Copy-Item uwp/Assets/*.png "$stage/Assets/"
+          # Write manifest without BOM (MakeAppx is strict)
+          $xml = Get-Content uwp/Package.appxmanifest -Raw
+          $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+          [IO.File]::WriteAllText("$stage/AppxManifest.xml", $xml, $utf8NoBom)
+          Get-ChildItem -Recurse $stage | Format-Table Name, Length
         env:
           EXE: ${{ steps.out.outputs.exe }}
 
-      - name: Create MSIX with MakeAppx (best-effort)
-        continue-on-error: true
+      - name: MakeAppx -> MSIX
         shell: pwsh
         run: |
-          $makeAppx = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter MakeAppx.exe -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match '\\x64\\' } |
+          $makeAppx = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter MakeAppx.exe |
+            Where-Object { $_.FullName -match '\\x64\\MakeAppx.exe$' } |
             Sort-Object FullName -Descending |
             Select-Object -First 1
-          if (-not $makeAppx) { Write-Warning "MakeAppx not found"; exit 0 }
-          & $makeAppx.FullName pack /d uwp/package-stage /p uwp/RubyLauncher-x64.msix /o
-          if ($LASTEXITCODE -ne 0) { Write-Warning "MakeAppx failed"; exit 0 }
+          if (-not $makeAppx) { throw "MakeAppx.exe not found" }
+          Write-Host "Using $($makeAppx.FullName)"
+          & $makeAppx.FullName pack /d uwp\package-stage /p uwp\RubyLauncher-x64.msix /o
+          if ($LASTEXITCODE -ne 0) { throw "MakeAppx failed with $LASTEXITCODE" }
+          Get-Item uwp\RubyLauncher-x64.msix | Format-List FullName, Length
 
-      - name: Upload artifact
+      - name: Sign MSIX with test certificate
+        shell: pwsh
+        run: |
+          $cert = New-SelfSignedCertificate `
+            -Type Custom `
+            -Subject "CN=RubyLauncherDev" `
+            -KeyUsage DigitalSignature `
+            -FriendlyName "RubyLauncher Dev" `
+            -CertStoreLocation "Cert:\CurrentUser\My" `
+            -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3", "2.5.29.19={text}")
+
+          $pwd = ConvertTo-SecureString -String "password" -Force -AsPlainText
+          Export-PfxCertificate -Cert $cert -FilePath uwp\RubyLauncherDev.pfx -Password $pwd | Out-Null
+          Export-Certificate -Cert $cert -FilePath uwp\RubyLauncherDev.cer | Out-Null
+
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
+            Where-Object { $_.FullName -match '\\x64\\signtool.exe$' } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $signtool) { throw "signtool.exe not found" }
+
+          & $signtool.FullName sign /fd SHA256 /a /f uwp\RubyLauncherDev.pfx /p password uwp\RubyLauncher-x64.msix
+          if ($LASTEXITCODE -ne 0) { throw "signtool failed" }
+          Write-Host "Signed uwp\RubyLauncher-x64.msix"
+
+      - name: Upload MSIX + cert + exe
         uses: actions/upload-artifact@v4
         with:
-          name: RubyLauncher-x64
+          name: RubyLauncher-x64-msix
           path: |
-            uwp/build/**/RubyLauncher.exe
-            uwp/build/**/RubyLauncher.pdb
             uwp/RubyLauncher-x64.msix
-            uwp/package-stage/**
-          if-no-files-found: warn
+            uwp/RubyLauncherDev.cer
+            uwp/build/**/RubyLauncher.exe
+            uwp/package-stage/AppxManifest.xml
+          if-no-files-found: error
