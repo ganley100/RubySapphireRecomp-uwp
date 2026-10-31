@@ -11,6 +11,17 @@ target_compile_definitions(RubyLauncher PRIVATE
     _UNICODE
     WIN32_LEAN_AND_MEAN
     NOMINMAX
+    WINAPI_FAMILY=WINAPI_FAMILY_APP
 )
 
-target_link_libraries(RubyLauncher PRIVATE user32 gdi32)
+# C++/WinRT + UWP
+target_link_libraries(RubyLauncher PRIVATE
+    WindowsApp
+    runtimeobject
+)
+
+# Helpful when generating a VS UWP-style project
+set_target_properties(RubyLauncher PROPERTIES
+    VS_WINDOWS_TARGET_PLATFORM_MIN_VERSION "10.0.17763.0"
+    VS_GLOBAL_MinimalCoreWin "true"
+)
