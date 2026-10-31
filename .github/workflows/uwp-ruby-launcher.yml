@@ -1,4 +1,4 @@
-name: Ruby UWP Launcher
+name: Ruby UWP Launcher (x64)
 
 on:
   push:
@@ -40,31 +40,50 @@ jobs:
           )) {
             [IO.File]::WriteAllBytes((Join-Path $assets $name), $bytes)
           }
-          Get-ChildItem $assets
 
-      - name: Configure CMake (x64 Release)
+      - name: Configure CMake (x64 only)
         working-directory: uwp
         shell: cmd
         run: |
           cmake -S . -B build -G "Visual Studio 17 2022" -A x64
 
-      - name: Build RubyLauncher
+      - name: Build RubyLauncher (x64 Release)
         working-directory: uwp
         shell: cmd
         run: |
           cmake --build build --config Release --parallel
 
-      - name: Locate output
+      - name: Locate output and verify 64-bit PE
         id: out
         shell: pwsh
         run: |
           $exe = Get-ChildItem -Path uwp/build -Recurse -Filter RubyLauncher.exe -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $exe) {
-            Write-Host "No RubyLauncher.exe found; listing build tree:"
+            Write-Host "No RubyLauncher.exe found"
             Get-ChildItem -Path uwp/build -Recurse | Select-Object -First 80 FullName
             exit 1
           }
           Write-Host "Found $($exe.FullName)"
+
+          # PE machine type at offset after e_lfanew: IMAGE_FILE_MACHINE_AMD64 = 0x8664
+          $fs = [IO.File]::OpenRead($exe.FullName)
+          $br = New-Object IO.BinaryReader($fs)
+          $fs.Seek(0x3C, 'Begin') | Out-Null
+          $peOffset = $br.ReadInt32()
+          $fs.Seek($peOffset, 'Begin') | Out-Null
+          $peSig = $br.ReadUInt32()  # PE\0\0
+          $machine = $br.ReadUInt16()
+          $br.Close()
+          $fs.Close()
+
+          $machineHex = '0x{0:X4}' -f $machine
+          Write-Host "PE signature OK=$($peSig -eq 0x4550) machine=$machineHex"
+          if ($machine -ne 0x8664) {
+            Write-Error "RubyLauncher.exe is NOT 64-bit (machine=$machineHex, expected 0x8664 AMD64)"
+            exit 1
+          }
+          Write-Host "Verified: 64-bit (x64 / AMD64)"
+
           echo "exe=$($exe.FullName)" >> $env:GITHUB_OUTPUT
           echo "exedir=$($exe.DirectoryName)" >> $env:GITHUB_OUTPUT
 
@@ -79,7 +98,6 @@ jobs:
           $manifest = $manifest -replace '\$targetnametoken\$\.exe', 'RubyLauncher.exe'
           $manifest = $manifest -replace 'EntryPoint="RubySapphireRecomp.App"', 'EntryPoint="Windows.FullTrustApplication"'
           Set-Content -Path "$stage/AppxManifest.xml" -Value $manifest -Encoding UTF8
-          Get-ChildItem -Recurse $stage
         env:
           EXE: ${{ steps.out.outputs.exe }}
 
@@ -91,24 +109,17 @@ jobs:
             Where-Object { $_.FullName -match '\\x64\\' } |
             Sort-Object FullName -Descending |
             Select-Object -First 1
-          if (-not $makeAppx) {
-            Write-Warning "MakeAppx.exe not found — uploading loose payload only"
-            exit 0
-          }
-          Write-Host "Using $($makeAppx.FullName)"
-          & $makeAppx.FullName pack /d uwp/package-stage /p uwp/RubyLauncher.msix /o
-          if ($LASTEXITCODE -ne 0) {
-            Write-Warning "MakeAppx failed. RubyLauncher.exe artifact is still uploaded."
-            exit 0
-          }
+          if (-not $makeAppx) { Write-Warning "MakeAppx not found"; exit 0 }
+          & $makeAppx.FullName pack /d uwp/package-stage /p uwp/RubyLauncher-x64.msix /o
+          if ($LASTEXITCODE -ne 0) { Write-Warning "MakeAppx failed"; exit 0 }
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: RubyLauncher-uwp
+          name: RubyLauncher-x64
           path: |
             uwp/build/**/RubyLauncher.exe
             uwp/build/**/RubyLauncher.pdb
-            uwp/RubyLauncher.msix
+            uwp/RubyLauncher-x64.msix
             uwp/package-stage/**
           if-no-files-found: warn
