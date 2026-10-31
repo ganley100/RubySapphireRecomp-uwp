@@ -28,8 +28,6 @@ jobs:
         run: |
           $assets = "uwp/Assets"
           New-Item -ItemType Directory -Force -Path $assets | Out-Null
-          # Minimal valid 1x1 PNG (dark blue-ish pixel), copied to required names.
-          # Real art can replace these later; packaging only needs files to exist.
           $pngB64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
           $bytes = [Convert]::FromBase64String($pngB64)
           foreach ($name in @(
@@ -48,7 +46,7 @@ jobs:
         working-directory: uwp
         shell: cmd
         run: |
-          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64
 
       - name: Build RubyLauncher
         working-directory: uwp
@@ -75,20 +73,18 @@ jobs:
         run: |
           $stage = "uwp/package-stage"
           New-Item -ItemType Directory -Force -Path "$stage/Assets" | Out-Null
-          Copy-Item $env:EXE $stage/
+          Copy-Item "$env:EXE" "$stage/RubyLauncher.exe"
           Copy-Item uwp/Assets/*.png $stage/Assets/
-          # Point manifest Executable at our built binary name
           $manifest = Get-Content uwp/Package.appxmanifest -Raw
           $manifest = $manifest -replace '\$targetnametoken\$\.exe', 'RubyLauncher.exe'
           $manifest = $manifest -replace 'EntryPoint="RubySapphireRecomp.App"', 'EntryPoint="Windows.FullTrustApplication"'
-          # Desktop bridge style identity still works for sideload testing on Windows;
-          # pure Xbox UWP needs a full VS UWP project + Store cert later.
           Set-Content -Path "$stage/AppxManifest.xml" -Value $manifest -Encoding UTF8
           Get-ChildItem -Recurse $stage
         env:
           EXE: ${{ steps.out.outputs.exe }}
 
       - name: Create MSIX with MakeAppx (best-effort)
+        continue-on-error: true
         shell: pwsh
         run: |
           $makeAppx = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter MakeAppx.exe -ErrorAction SilentlyContinue |
@@ -102,7 +98,8 @@ jobs:
           Write-Host "Using $($makeAppx.FullName)"
           & $makeAppx.FullName pack /d uwp/package-stage /p uwp/RubyLauncher.msix /o
           if ($LASTEXITCODE -ne 0) {
-            Write-Warning "MakeAppx failed (common without a full-trust mapping / proper UWP target). Loose files still uploaded."
+            Write-Warning "MakeAppx failed. RubyLauncher.exe artifact is still uploaded."
+            exit 0
           }
 
       - name: Upload artifact
