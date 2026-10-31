@@ -1,6 +1,8 @@
 // Pure UWP launcher (CoreApplication + CoreWindow).
 // Builds with CMAKE_SYSTEM_NAME=WindowsStore for Xbox / Windows sideload.
 
+#include <windows.h>
+
 #include <winrt/base.h>
 #include <winrt/Windows.ApplicationModel.Core.h>
 #include <winrt/Windows.UI.Core.h>
