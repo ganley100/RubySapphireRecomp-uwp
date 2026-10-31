@@ -1,67 +1,67 @@
-# UWP Launcher (Xbox / Windows)
+# UWP Launcher (Xbox / Windows) — shell only
 
 Minimal **UWP package** that installs on Xbox One / Series and Windows.
-This is **only the launcher shell** — it does not yet embed the full Ruby/Sapphire recomp engine.
+This is **only the launcher shell** (dark window + gamepad Back/B to exit).
+It does **not** embed the Ruby/Sapphire recomp engine yet.
 
-## What you get
+## Files
 
-- `Package.appxmanifest` — identity, Xbox + desktop capabilities
-- Blank C++/WinRT-style entry (`App.cpp`) that shows a simple title screen
-- Asset placeholders (replace with real logos before Store submission)
-- Instructions to build & sideload with Visual Studio
+| Path | Purpose |
+|------|---------|
+| `Package.appxmanifest` | App identity, Xbox + desktop families, gamepad capability |
+| `App.cpp` | `CoreApplication` + `CoreWindow` entry (no XAML) |
+| `pch.h` / `pch.cpp` | WinRT precompiled headers |
+| `Assets/` | Tile / splash PNGs (add before packaging) |
 
-## Requirements
+## Fastest way to get it on a device
 
-- Visual Studio 2022
-- Workloads:
-  - **Desktop development with C++**
-  - **Universal Windows Platform development**
-  - (Optional) **Game development with C++** / Xbox development tools if targeting Xbox hardware
-- Windows 10/11 SDK (10.0.19041.0 or newer)
+### 1. Create a VS project and point it at these sources
 
-## Build & deploy
+1. Visual Studio 2022 → **Create a new project**
+2. Template: **Blank App (C++/WinRT)** → UWP  
+   (or **DirectX 11 App (UWP)** if you prefer a game-style project)
+3. Name it e.g. `RubySapphireLauncher`, platform **x64**
+4. Replace the generated `App.cpp` / `pch.*` with the files from this `uwp/` folder
+5. Replace `Package.appxmanifest` with the one here (fix Publisher `CN=...` to match your cert)
+6. Project properties → **C/C++** → **Language** → **C++ Language Standard** = `/std:c++17` or later
+7. Add WinRT projection references if the Blank template didn’t already (Windows SDK)
 
-### Option A — Visual Studio (recommended)
+### 2. Assets
 
-1. Open **Developer Command Prompt for VS 2022** or use the IDE.
-2. Create a new **Blank App (C++/WinRT)** UWP project temporarily, or use the files under `uwp/` as the starting point.
-3. Copy / add:
-   - `Package.appxmanifest`
-   - `App.cpp` / `App.h` / `pch.h` / `pch.cpp`
-   - `Assets\*`
-4. Set target to **x64** (Xbox and modern Windows).
-5. Set deployment target:
-   - Local Machine (Windows)
-   - or **Remote Machine / Device** for Xbox (Developer Mode on)
-6. Build → Deploy.
+Use **Project → Add → New Item → UWP → Asset Generator**, or drop PNGs into `Assets/`  
+(see `Assets/README.md` for sizes).
 
-### Option B — Sideload MSIX on Xbox
+### 3. Deploy
 
-1. Enable **Developer Mode** on the Xbox.
-2. Build the package (Project → Publish → Create App Packages) as **sideload**.
-3. Copy the `.msix` / `.msixbundle` to the console (USB or network).
-4. Install via Xbox Device Portal or `Add-AppxPackage` from a connected PC.
+- **Windows:** set target to Local Machine → F5  
+- **Xbox:** enable Developer Mode on the console → Remote Machine / Device Portal → Deploy  
+  Or **Publish → Create App Packages** (sideload) and install the `.msix` via Device Portal
 
-## ROM / game binary
+## Controls (shell)
 
-This launcher does **not** ship ROMs.
-When you later wire the full recomp:
+- **B / Escape** — exit the launcher
 
-- User places `ruby_usa.gba` / `sapphire_usa.gba` in the app `LocalState` folder, **or**
-- Launcher opens a file picker (UWP `FileOpenPicker`) and copies into `LocalState`.
+## ROM policy
 
-Never commit ROMs to the repo.
+No ROMs in the package. When the full game is wired later:
 
-## Next steps (after the shell works)
+- User picks a ROM with `FileOpenPicker`, or
+- Copies into `ApplicationData.Current().LocalFolder()`
 
-1. Confirm the blank launcher deploys on your Xbox / PC.
-2. Add a simple UI: “Select Ruby ROM” / “Select Sapphire ROM”.
-3. Link `gbarecomp` runtime under a UWP-compatible platform layer (Phase 2).
-4. Package the recompiled game as a library loaded by this launcher.
+## Publisher / identity
 
-## Identity (edit before publishing)
+Edit before real distribution:
 
-In `Package.appxmanifest`:
+```xml
+<Identity Name="ganley100.RubySapphireRecomp"
+          Publisher="CN=ganley100"
+          Version="0.1.0.0" />
+```
 
-- `Name` / `Publisher` must match your certificate
-- `PhoneIdentity` / Xbox product IDs only matter for Store submission
+`Publisher` must match the certificate you sign with (VS creates a test cert automatically for sideload).
+
+## What’s next
+
+1. Confirm this shell deploys on your Xbox / PC  
+2. Add a simple “Select ROM” button / gamepad menu  
+3. Link `gbarecomp` under a UWP-safe platform layer  
