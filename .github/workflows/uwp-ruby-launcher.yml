@@ -1,0 +1,117 @@
+name: Ruby UWP Launcher
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'uwp/**'
+      - '.github/workflows/uwp-ruby-launcher.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Setup CMake
+        uses: lukka/get-cmake@latest
+
+      - name: Generate placeholder UWP assets
+        shell: pwsh
+        run: |
+          $assets = "uwp/Assets"
+          New-Item -ItemType Directory -Force -Path $assets | Out-Null
+          # Minimal valid 1x1 PNG (dark blue-ish pixel), copied to required names.
+          # Real art can replace these later; packaging only needs files to exist.
+          $pngB64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+          $bytes = [Convert]::FromBase64String($pngB64)
+          foreach ($name in @(
+            "StoreLogo.png",
+            "Square44x44Logo.png",
+            "Square71x71Logo.png",
+            "Square150x150Logo.png",
+            "Wide310x150Logo.png",
+            "SplashScreen.png"
+          )) {
+            [IO.File]::WriteAllBytes((Join-Path $assets $name), $bytes)
+          }
+          Get-ChildItem $assets
+
+      - name: Configure CMake (x64 Release)
+        working-directory: uwp
+        shell: cmd
+        run: |
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build RubyLauncher
+        working-directory: uwp
+        shell: cmd
+        run: |
+          cmake --build build --config Release --parallel
+
+      - name: Locate output
+        id: out
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path uwp/build -Recurse -Filter RubyLauncher.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) {
+            Write-Host "No RubyLauncher.exe found; listing build tree:"
+            Get-ChildItem -Path uwp/build -Recurse | Select-Object -First 80 FullName
+            exit 1
+          }
+          Write-Host "Found $($exe.FullName)"
+          echo "exe=$($exe.FullName)" >> $env:GITHUB_OUTPUT
+          echo "exedir=$($exe.DirectoryName)" >> $env:GITHUB_OUTPUT
+
+      - name: Stage package layout
+        shell: pwsh
+        run: |
+          $stage = "uwp/package-stage"
+          New-Item -ItemType Directory -Force -Path "$stage/Assets" | Out-Null
+          Copy-Item $env:EXE $stage/
+          Copy-Item uwp/Assets/*.png $stage/Assets/
+          # Point manifest Executable at our built binary name
+          $manifest = Get-Content uwp/Package.appxmanifest -Raw
+          $manifest = $manifest -replace '\$targetnametoken\$\.exe', 'RubyLauncher.exe'
+          $manifest = $manifest -replace 'EntryPoint="RubySapphireRecomp.App"', 'EntryPoint="Windows.FullTrustApplication"'
+          # Desktop bridge style identity still works for sideload testing on Windows;
+          # pure Xbox UWP needs a full VS UWP project + Store cert later.
+          Set-Content -Path "$stage/AppxManifest.xml" -Value $manifest -Encoding UTF8
+          Get-ChildItem -Recurse $stage
+        env:
+          EXE: ${{ steps.out.outputs.exe }}
+
+      - name: Create MSIX with MakeAppx (best-effort)
+        shell: pwsh
+        run: |
+          $makeAppx = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter MakeAppx.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '\\x64\\' } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $makeAppx) {
+            Write-Warning "MakeAppx.exe not found — uploading loose payload only"
+            exit 0
+          }
+          Write-Host "Using $($makeAppx.FullName)"
+          & $makeAppx.FullName pack /d uwp/package-stage /p uwp/RubyLauncher.msix /o
+          if ($LASTEXITCODE -ne 0) {
+            Write-Warning "MakeAppx failed (common without a full-trust mapping / proper UWP target). Loose files still uploaded."
+          }
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RubyLauncher-uwp
+          path: |
+            uwp/build/**/RubyLauncher.exe
+            uwp/build/**/RubyLauncher.pdb
+            uwp/RubyLauncher.msix
+            uwp/package-stage/**
+          if-no-files-found: warn
