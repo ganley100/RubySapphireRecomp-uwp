@@ -2,9 +2,7 @@
 <Package
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
-  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
-  xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
-  IgnorableNamespaces="uap rescap uap10">
+  IgnorableNamespaces="uap">
 
   <Identity
     Name="ganley100.RubyLauncher"
@@ -15,7 +13,7 @@
     <DisplayName>RubyLauncher</DisplayName>
     <PublisherDisplayName>ganley100</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
-    <Description>Ruby recomp launcher shell for Windows and Xbox sideload testing</Description>
+    <Description>Ruby recomp UWP launcher for Xbox and Windows</Description>
   </Properties>
 
   <Dependencies>
@@ -31,7 +29,7 @@
     <Application
       Id="App"
       Executable="RubyLauncher.exe"
-      EntryPoint="Windows.FullTrustApplication">
+      EntryPoint="RubyLauncher.App">
       <uap:VisualElements
         DisplayName="RubyLauncher"
         Description="Ruby recomp launcher"
@@ -49,7 +47,7 @@
   </Applications>
 
   <Capabilities>
-    <rescap:Capability Name="runFullTrust" />
+    <Capability Name="internetClient" />
     <DeviceCapability Name="gamepad" />
   </Capabilities>
 </Package>
